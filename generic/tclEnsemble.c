@@ -665,7 +665,7 @@ TclCreateEnsembleInNs(
     Tcl_Command token;
 
     ensemblePtr = ckalloc(sizeof(EnsembleConfig));
-    token = tclNRCreateCommandInNs(interp, name,
+    token = TclNRCreateCommandInNs(interp, name,
 	(Tcl_Namespace *) nameNsPtr, NsEnsembleImplementationCmd,
 	NsEnsembleImplementationCmdNR, ensemblePtr, DeleteEnsembleConfig);
     if (token == NULL) {
@@ -2524,10 +2524,9 @@ DeleteEnsembleConfig(
  * BuildEnsembleConfig --
  *
  *	Create the internal data structures that describe how an ensemble
- *	looks, being a hash mapping from the full command name to the Tcl list
+ *	looks, being a hash mapping from the simple command name to the Tcl list
  *	that describes the implementation prefix words, and a sorted array of
- *	all the full command names to allow for reasonably efficient
- *	unambiguous prefix handling.
+ *	the names to allow for reasonably efficient unambiguous prefix handling.
  *
  * Results:
  *	None.
@@ -2586,12 +2585,7 @@ BuildEnsembleConfig(
                 name = TclGetString(subv[i+1]);
                 hPtr = Tcl_CreateHashEntry(hash, name, &isNew);
                 if (isNew) {
-                    cmdObj = Tcl_NewStringObj(ensemblePtr->nsPtr->fullName, -1);
-                    if (ensemblePtr->nsPtr->parentPtr != NULL) {
-                        Tcl_AppendStringsToObj(cmdObj, "::", name, NULL);
-                    } else {
-                        Tcl_AppendStringsToObj(cmdObj, name, NULL);
-                    }
+                    cmdObj = Tcl_NewStringObj(name, -1);
                     cmdPrefixObj = Tcl_NewListObj(1, &cmdObj);
                     Tcl_SetHashValue(hPtr, cmdPrefixObj);
                     Tcl_IncrRefCount(cmdPrefixObj);
@@ -2623,12 +2617,7 @@ BuildEnsembleConfig(
                  * command is actually there; that is the programmer's
                  * responsibility (or [::unknown] of course).
                  */
-                cmdObj = Tcl_NewStringObj(ensemblePtr->nsPtr->fullName, -1);
-                if (ensemblePtr->nsPtr->parentPtr != NULL) {
-                    Tcl_AppendStringsToObj(cmdObj, "::", name, NULL);
-                } else {
-                    Tcl_AppendStringsToObj(cmdObj, name, NULL);
-                }
+                cmdObj = Tcl_NewStringObj(name, -1);
                 cmdPrefixObj = Tcl_NewListObj(1, &cmdObj);
                 Tcl_SetHashValue(hPtr, cmdPrefixObj);
                 Tcl_IncrRefCount(cmdPrefixObj);
@@ -2690,8 +2679,7 @@ BuildEnsembleConfig(
 		    if (isNew) {
 			Tcl_Obj *cmdObj, *cmdPrefixObj;
 
-			TclNewObj(cmdObj);
-			Tcl_AppendStringsToObj(cmdObj, nsCmdName, NULL);
+			cmdObj = Tcl_NewStringObj(nsCmdName, -1);
 			cmdPrefixObj = Tcl_NewListObj(1, &cmdObj);
 			Tcl_SetHashValue(hPtr, cmdPrefixObj);
 			Tcl_IncrRefCount(cmdPrefixObj);
