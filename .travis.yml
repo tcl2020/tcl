@@ -1,0 +1,8 @@
+sudo: required
+
+services:
+  - docker
+  
+script:
+  - cd .. && git clone https://github.com/TCL-2020/dockerfiles.git && cd developer-mode && docker build -t tcl-2020-dev .
+  - cd .. && docker run -it -v $PWD:/work --name dev tcl-2020-dev sh /builds/build-all.sh
