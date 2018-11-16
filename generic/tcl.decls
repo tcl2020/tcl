@@ -132,7 +132,7 @@ declare 28 {
 declare 29 {
     Tcl_Obj *Tcl_DuplicateObj(Tcl_Obj *objPtr)
 }
-declare 30 {
+declare 30 {deprecated {Kept only for deployed refcounting macros}} {
     void TclFreeObj(Tcl_Obj *objPtr)
 }
 declare 31 {
@@ -2344,6 +2344,38 @@ declare 634 {
 declare 635 {
     int TclZipfs_MountBuffer(Tcl_Interp *interp, const char *mountPoint,
 	    unsigned char *data, size_t datalen, int copy)
+}
+
+# TIP #445
+declare 636 {
+    void Tcl_FreeIntRep(Tcl_Obj *objPtr)
+}
+declare 637 {
+    char *Tcl_InitStringRep(Tcl_Obj *objPtr, const char *bytes,
+	    unsigned int numBytes)
+}
+declare 638 {
+    Tcl_ObjIntRep *Tcl_FetchIntRep(Tcl_Obj *objPtr, const Tcl_ObjType *typePtr)
+}
+declare 639 {
+    void Tcl_StoreIntRep(Tcl_Obj *objPtr, const Tcl_ObjType *typePtr,
+	    const Tcl_ObjIntRep *irPtr)
+}
+declare 640 {
+    int Tcl_HasStringRep(Tcl_Obj *objPtr)
+}
+
+# TIP #506
+declare 641 {
+    void Tcl_IncrRefCount(Tcl_Obj *objPtr)
+}
+
+declare 642 {
+    void Tcl_DecrRefCount(Tcl_Obj *objPtr)
+}
+
+declare 643 {
+    int Tcl_IsShared(Tcl_Obj *objPtr)
 }
 
 # ----- BASELINE -- FOR -- 8.7.0 ----- #
