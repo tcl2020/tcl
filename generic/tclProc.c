@@ -159,13 +159,23 @@ Tcl_ProcObjCmd(
 {
     register Interp *iPtr = (Interp *) interp;
     Proc *procPtr;
-    const char *procName;
+    const char *procName, *arg1;
     const char *simpleName, *procArgs, *procBody;
     Namespace *nsPtr, *altNsPtr, *cxtNsPtr;
     Tcl_Command cmd;
+    int byName = 0, skip = 0;
 
-    if (objc != 4) {
-	Tcl_WrongNumArgs(interp, 1, objv, "name args body");
+    if (objc == 5) {
+        arg1 = TclGetString(objv[1]);
+        if (arg1 && strcmp("-named-parameters", arg1) == 0) {
+            byName = 1;
+            skip = 1;
+            Tcl_WrongNumArgs(interp, 1, objv, "[-named-parameters] name args body");
+        } else {
+            return TCL_ERROR;
+        }
+    } else if (objc != 4) {
+	Tcl_WrongNumArgs(interp, 1, objv, "[-named-parameters] name args body");
 	return TCL_ERROR;
     }
 
@@ -175,7 +185,7 @@ Tcl_ProcObjCmd(
      * namespace.
      */
 
-    procName = TclGetString(objv[1]);
+    procName = TclGetString(objv[1 + skip]);
     TclGetNamespaceForQualName(interp, procName, NULL, 0,
 	    &nsPtr, &altNsPtr, &cxtNsPtr, &simpleName);
 
@@ -198,7 +208,7 @@ Tcl_ProcObjCmd(
      * Create the data structure to represent the procedure.
      */
 
-    if (TclCreateProc(interp, nsPtr, simpleName, objv[2], objv[3],
+    if (TclCreateProc(interp, nsPtr, simpleName, objv[2 + skip], objv[3 + skip],
 	    &procPtr) != TCL_OK) {
 	Tcl_AddErrorInfo(interp, "\n    (creating proc \"");
 	Tcl_AddErrorInfo(interp, simpleName);
@@ -217,6 +227,9 @@ Tcl_ProcObjCmd(
      */
 
     procPtr->cmdPtr = (Command *) cmd;
+    if (byName) {
+        procPtr->cmdPtr->flags |= CMD_NAMED_PARAMETERS;
+    }
 
     /*
      * TIP #280: Remember the line the procedure body is starting on. In a
@@ -1516,6 +1529,85 @@ InitArgsAndLocals(
 /*
  *----------------------------------------------------------------------
  *
+ * TclNamedParametersRewrite
+ *
+ * Change the call parameters to match the "named" parameters of a proc.
+ * Using the variable names of the parameters, create the argument list
+ * by converting -name value pairs into positional elements in list.
+ *
+ * All proc arguments without a default value require a named parameter.
+ *
+ *----------------------------------------------------------------------
+ */
+
+static int TclNamedParametersRewrite(Tcl_Interp *interp, CallFrame *framePtr) {
+    int local_var_index, index, ii;
+    Tcl_Obj ** newObjv;
+
+    if (!framePtr || !framePtr->procPtr || !framePtr->procPtr->firstLocalPtr) {
+        return TCL_ERROR;
+    }
+
+    size_t newObjvSize = (1 + framePtr->procPtr->numArgs) * sizeof(*newObjv);
+    newObjv = (Tcl_Obj **)Tcl_AttemptAlloc(newObjvSize);
+    memset(newObjv, 0, newObjvSize);
+    /* Copy the proc object */
+    newObjv[0] = framePtr->objv[0];
+
+    /* for each parameter scan the original argument list for a key match */
+    CompiledLocal * varPtr = framePtr->procPtr->firstLocalPtr;
+    local_var_index = 1;
+    while (varPtr) {
+        /* Scan the argument list as key value pairs */
+        for (index = 1; index < framePtr->objc; index = index + 2) {
+            Tcl_Obj *key = framePtr->objv[index];
+            const char *keyString = TclGetString(key);
+            if (!keyString || *keyString != '-') {
+                return TCL_ERROR;
+            }
+            int len = strlen(keyString) - 1;
+            if (len != varPtr->nameLength) {
+                continue;
+            }
+            if (strncmp(varPtr->name, &keyString[1], varPtr->nameLength) == 0) {
+                /* The parameter matches "-name" */
+                Tcl_Obj *value = framePtr->objv[index + 1];
+                newObjv[local_var_index] = value;
+            }
+        }
+        /* next argument */
+        varPtr = varPtr->nextPtr;
+        local_var_index++;
+    }
+
+    /* replace argument count and list */
+    framePtr->objc = framePtr->procPtr->numArgs + 1;
+    framePtr->objv = newObjv;
+
+    /* for any parameters not provided in the argument list supply the default */
+    for (index = 1; index < framePtr->objc; index++) {
+        if (!newObjv[index]) {
+            /* Get the defVal of the nth parameter */
+            ii = index;
+            varPtr = framePtr->procPtr->firstLocalPtr;
+            while (--ii > 0) {
+                varPtr = varPtr->nextPtr;
+            }
+            if (!varPtr->defValuePtr) {
+                return TCL_ERROR;
+            }
+            Tcl_Obj *defValue = varPtr->defValuePtr;
+            Tcl_IncrRefCount(defValue);
+            newObjv[index] = defValue;
+        }
+    }
+
+    return TCL_OK;
+}
+
+/*
+ *----------------------------------------------------------------------
+ *
  * TclPushProcCallFrame --
  *
  *	Compiles a proc body if necessary, then pushes a CallFrame suitable
@@ -1602,6 +1694,13 @@ TclPushProcCallFrame(
     framePtr->objc = objc;
     framePtr->objv = objv;
     framePtr->procPtr = procPtr;
+
+    if (!isLambda && procPtr->cmdPtr->flags & CMD_NAMED_PARAMETERS) {
+        result = TclNamedParametersRewrite(interp, framePtr);
+        if (result != TCL_OK) {
+            return result;
+        }
+    }
 
     return TCL_OK;
 }
