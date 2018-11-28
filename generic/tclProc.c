@@ -1562,6 +1562,7 @@ static int TclNamedParametersRewrite(Tcl_Interp *interp, CallFrame *framePtr) {
     int dstIndex, srcIndex, index, keyValueMode = 1;
     Tcl_Obj ** newObjv;
     int newObjc = framePtr->procPtr->numArgs + 1;
+    Tcl_DString errbuf;
 
     if (!framePtr || !framePtr->procPtr || !framePtr->procPtr->firstLocalPtr) {
         return TCL_ERROR;
@@ -1704,32 +1705,52 @@ static int TclNamedParametersRewrite(Tcl_Interp *interp, CallFrame *framePtr) {
 
 error_args:
     {
-        char errbuf[1024];
-        errbuf[0] = 0;
+        /* Write the expectations for calling this named parameter proc.
+         * optional named parameters are ?-name val?, required are -name val.
+         * postion parameters are optional ?name? or just name.
+         * final args is "?arg ...?"
+         */
+        Tcl_DStringInit(&errbuf);
         index = 0;
         varPtr = framePtr->procPtr->firstLocalPtr;
         while (varPtr) {
-            char* q = varPtr->defValuePtr ? "?" : "";
             if (varPtr->nameLength == 2 && varPtr->name[0] == '-' && varPtr->name[1] == '-') {
-                strcat(errbuf, " ?--?");
+                Tcl_DStringAppend(&errbuf, " ?--?", 5);
             } else if (index < markerIndex) {
-                char *p = &errbuf[strlen(errbuf)];
-                sprintf(p, " %s-%s val%s", q, &varPtr->name[0], q);
+                Tcl_DStringAppend(&errbuf, " ", 1);
+                if (varPtr->defValuePtr) {
+                    Tcl_DStringAppend(&errbuf, "?", 1);
+                }
+                Tcl_DStringAppend(&errbuf, "-", 1);
+                Tcl_DStringAppend(&errbuf, &varPtr->name[0], varPtr->nameLength);
+                Tcl_DStringAppend(&errbuf, " val", -1);
+                if (varPtr->defValuePtr) {
+                    Tcl_DStringAppend(&errbuf, "?", 1);
+                }
             } else {
                 if (index == framePtr->procPtr->numArgs - 1
                     && varPtr->nameLength == 4 && strncmp("args", &varPtr->name[0], 4) == 0) {
-                    char *p = &errbuf[strlen(errbuf)];
-                    strcat(p, " ?arg ...?");
+                    Tcl_DStringAppend(&errbuf, " ?arg ...?", -1);
                 } else {
-                    char *p = &errbuf[strlen(errbuf)];
-                    sprintf(p, " %s%s%s", q, &varPtr->name[0], q);
+                    Tcl_DStringAppend(&errbuf, " ", 1);
+                    if (varPtr->defValuePtr) {
+                        Tcl_DStringAppend(&errbuf, "?", 1);
+                    }
+                    Tcl_DStringAppend(&errbuf, &varPtr->name[0], varPtr->nameLength);
+                    if (varPtr->defValuePtr) {
+                        Tcl_DStringAppend(&errbuf, "?", 1);
+                    }
                 }
             }
             varPtr = varPtr->nextPtr;
             index++;
         }
 
-        Tcl_SetObjResult(interp, Tcl_ObjPrintf("wrong # args: should be \"%s%s\"", TclGetString(framePtr->objv[0]), errbuf));
+        Tcl_Obj *errorResult = Tcl_ObjPrintf("wrong # args: should be \"%s%s\"",
+                                             TclGetString(framePtr->objv[0]),
+                                             Tcl_DStringValue(&errbuf));
+        Tcl_SetObjResult(interp, errorResult);
+        Tcl_DStringFree(&errbuf);
     }
 
     iPtr->flags |= INTERP_ALTERNATE_WRONG_ARGS;
