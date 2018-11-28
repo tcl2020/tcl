@@ -159,7 +159,7 @@ Tcl_ProcObjCmd(
 {
     register Interp *iPtr = (Interp *) interp;
     Proc *procPtr;
-    const char *procName, *arg1;
+    const char *procName;
     const char *simpleName, *procArgs, *procBody;
     Namespace *nsPtr, *altNsPtr, *cxtNsPtr;
     Tcl_Command cmd;
