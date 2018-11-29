@@ -1569,7 +1569,7 @@ static int TclNamedParametersRewrite(Tcl_Interp *interp, CallFrame *framePtr) {
     }
 
     /* Allocate a new objv pointer array */
-    newObjv = (Tcl_Obj **)Tcl_AttemptAlloc(newObjc * sizeof(*newObjv));
+    newObjv = (Tcl_Obj **)TclpAlloc(newObjc * sizeof(*newObjv));
     memset(newObjv, 0, newObjc * sizeof(*newObjv));
     /* Copy the proc object */
     newObjv[0] = framePtr->objv[0];
@@ -1699,6 +1699,7 @@ static int TclNamedParametersRewrite(Tcl_Interp *interp, CallFrame *framePtr) {
 
     /* replace argument count and list */
     framePtr->objc = newObjc;
+    /* TODO Do we need to free objv? I don't think so. It is TEBC stack allocated? */
     framePtr->objv = newObjv;
 
     return TCL_OK;
