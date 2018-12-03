@@ -163,6 +163,7 @@ Tcl_ProcObjCmd(
     const char *simpleName, *procArgs, *procBody;
     Namespace *nsPtr, *altNsPtr, *cxtNsPtr;
     Tcl_Command cmd;
+    int byName = 0;
 
     if (objc != 4) {
 	Tcl_WrongNumArgs(interp, 1, objv, "name args body");
@@ -195,6 +196,22 @@ Tcl_ProcObjCmd(
     }
 
     /*
+     * Scan for string -- in the procedure arguments.
+     * If -- is present, then the proc can be called using named
+     * parameters.
+     */
+    const char *argList = TclGetString(objv[2]);
+    if (argList && strstr(argList, "--")) {
+        byName = 1;
+        if (argList[0] == '-' && argList[1] == '-'
+            && (argList[2] == 0 || TclIsSpaceProc(argList[2]))) {
+            Tcl_SetObjResult(interp,
+                Tcl_ObjPrintf("-- cannot be the first argument for named parameters. Use positional parameters."));
+            return TCL_ERROR;
+        }
+    }
+
+    /*
      * Create the data structure to represent the procedure.
      */
 
@@ -217,6 +234,9 @@ Tcl_ProcObjCmd(
      */
 
     procPtr->cmdPtr = (Command *) cmd;
+    if (byName) {
+        procPtr->cmdPtr->flags |= CMD_NAMED_PARAMETERS;
+    }
 
     /*
      * TIP #280: Remember the line the procedure body is starting on. In a
@@ -1042,7 +1062,8 @@ ProcWrongNumArgs(
     Tcl_Interp *interp,
     int skip)
 {
-    CallFrame *framePtr = ((Interp *)interp)->varFramePtr;
+    Interp *iPtr = (Interp *) interp;
+    CallFrame *framePtr = iPtr->varFramePtr;
     register Proc *procPtr = framePtr->procPtr;
     int localCt = procPtr->numCompiledLocals, numArgs, i;
     Tcl_Obj **desiredObjs;
@@ -1089,8 +1110,10 @@ ProcWrongNumArgs(
 	}
     }
 
-    Tcl_ResetResult(interp);
-    Tcl_WrongNumArgs(interp, numArgs+1, desiredObjs, final);
+    if (!(iPtr->flags & INTERP_ALTERNATE_WRONG_ARGS)) {
+        Tcl_ResetResult(interp);
+        Tcl_WrongNumArgs(interp, numArgs+1, desiredObjs, final);
+    }
 
     for (i=0 ; i<=numArgs ; i++) {
 	Tcl_DecrRefCount(desiredObjs[i]);
@@ -1516,6 +1539,337 @@ InitArgsAndLocals(
 /*
  *----------------------------------------------------------------------
  *
+ * TclNamedParametersRewrite
+ *
+ * Change the call parameters to match the "named" parameters of a proc.
+ * Using the variable names of the parameters, create the argument list
+ * by converting -name value pairs into positional elements in list.
+ *
+ * Named parameters are respented as "-key value" pairs where key is the proc
+ * parameter variable. The general form is zero or more key value parameters.
+ * Arguments are processed from left to right.  If the argument starts with -,
+ * then this is a key and will be followed by a value.
+ * An optional "--" will end the key value processing and the remaining arguments will
+ * be positional.
+ *
+ *     {-key value}* [--] {positional}*
+ *
+ *----------------------------------------------------------------------
+ */
+
+static int TclNamedParametersRewrite(Tcl_Interp *interp, CallFrame *framePtr) {
+    Interp *iPtr = (Interp *) interp;
+    int srcIndex = 1, npos = 0, varArgs = 0, markerIndex = 0;
+    Tcl_Obj *copyPtr = NULL;
+
+    if (!framePtr || !framePtr->procPtr || !framePtr->procPtr->firstLocalPtr) {
+        return TCL_ERROR;
+    }
+
+    /* Find where the -- is located in the proc declaration.
+     * And determine if the proc has variable number of arguments.
+     * Caching this information when compiling the proc would be faster. */
+    {
+        CompiledLocal * varPtr;
+        int ii;
+
+        ii = 0;
+        varArgs = 0;
+        varPtr = framePtr->procPtr->firstLocalPtr;
+        while (ii < framePtr->procPtr->numArgs && varPtr) {
+            const char * const name = varPtr->name;
+            /* check if name a parameter is -- */
+            if (markerIndex == 0 && name[0] == '-' && name[1] == '-' && !name[2]) {
+                markerIndex = ii + 1;
+            }
+            /* check for varargs */
+            if (ii == framePtr->procPtr->numArgs -1 && !strcmp(name, "args")) {
+                varArgs = 1;
+            }
+            ii++;
+            varPtr = varPtr->nextPtr;
+        }
+    }
+
+    /* Internal error. We did not find the marker. */
+    if (markerIndex == 0) {
+        return TCL_ERROR;
+    }
+
+    /* Compute the new size of the argument list.
+     * Either numArgs as declared or the size of a variable args call. */
+    {
+        int index, posIndex = framePtr->objc;
+
+        /* Find where the position arguments start. */
+        for (index = 1; index < framePtr->objc; index++) {
+            const char *arg = TclGetString(framePtr->objv[index]);
+            if (arg && arg[0] == '-' && arg[1] == '-' && !arg[2]) {
+                /* found the -- marker, pos args start after the marker */
+                posIndex = index + 1;
+                break;
+            }
+            if (posIndex == framePtr->objc && arg && arg[0] != '-' && (index % 2) == 1) {
+                /* found a non-key string in the position of a key, assume positional */
+                posIndex = index;
+                break;
+            }
+        }
+
+        /* Check that all of the named parameters have matching declared proc parameters */
+        for (index = 1; index + 1 < posIndex; index = index + 2) {
+            const char *arg = TclGetString(framePtr->objv[index]);
+            CompiledLocal * varPtr = framePtr->procPtr->firstLocalPtr;
+            int ii = markerIndex - 1;
+            int found = 0;
+            while (varPtr && ii-- > 0 && !found && arg) {
+                int argLen = strlen(arg) - 1;
+                if (argLen == varPtr->nameLength && !strncmp(&arg[1], varPtr->name, varPtr->nameLength)) {
+                    int kk;
+                    found = 1;
+                    /* check the same named parameter is not repeated */
+                    for (kk = index + 2; kk < posIndex; kk = kk + 2) {
+                        const char *arg2 = TclGetString(framePtr->objv[kk]);
+                        if (arg2 && !strcmp(arg, arg2)) {
+                            found = 0;
+                        }
+                    }
+                }
+                varPtr = varPtr->nextPtr;
+            }
+            if (!found) {
+                goto error_args;
+            }
+        }
+
+        /* Compute size of new objv including any extra args call arguments */
+        {
+            int nPassedPosArgs = framePtr->objc - posIndex;
+            int nDeclPosArgs = framePtr->procPtr->numArgs - markerIndex;
+            /* Alloc extra space for variable args */
+            npos = nPassedPosArgs > nDeclPosArgs ? nPassedPosArgs - nDeclPosArgs : 0;
+        }
+
+        if (npos > 0 && !varArgs) {
+            /* too many positional args */
+            goto error_args;
+        }
+    }
+
+    /* Create the new argument list */
+    copyPtr = Tcl_NewListObj(framePtr->procPtr->numArgs + 1 + npos, NULL);
+    /* Free the list after the call */
+    Tcl_IncrRefCount(copyPtr);
+    TclNRAddCallback(interp, TclNRReleaseValues, copyPtr, NULL, NULL, NULL);
+    /* Copy the proc to the argument list */
+    Tcl_ListObjAppendElement(interp, copyPtr, framePtr->objv[0]);
+
+    /* Build the rest of the argument list in the proc declaration order so
+     * that the list operations are appends. */
+    {
+        CompiledLocal * varPtr = framePtr->procPtr->firstLocalPtr;
+
+        /* For each proc parameter scan the passed arguments for the value. */
+        while (varPtr) {
+            int found = 0;
+            const char * name = varPtr->name;
+
+            /* check if name of the parameter is -- */
+            if (name[0] == '-' && name[1] == '-' && !name[2]) {
+                /* stop processing declared arguments */
+                break;
+            }
+
+            {
+                /* Search the calling argument list for the key value pair matching
+                * the argument in varPtr. */
+                int kk;
+
+                found = 0;
+                /* Find the -key value pair in the argument list for key == "-"name */
+                for (kk = 1; !found && kk < framePtr->objc; kk = kk + 2) {
+                    /* extract the string for the key */
+                    const char *keyString = TclGetString(framePtr->objv[kk]);
+
+                    /* stop scanning for key values at -- */
+                    if (keyString && keyString[0] == '-' && keyString[1] == '-' && !keyString[2]) {
+                        break;
+                    }
+
+                    /* check that the key starts with a dash */
+                    if (!keyString || keyString[0] != '-') {
+                        break;
+                    }
+
+                    /* check that we have a value, and the key has a non-zero length name */
+                    if (kk + 1 >= framePtr->objc || !keyString[1]) {
+                        goto error_args;
+                    }
+
+                    {
+                        /* trim off the "-" and compare if the key matches the parameter name */
+                        int keyLen = strlen(keyString) - 1;
+                        if (keyLen == varPtr->nameLength && !strncmp(&keyString[1], &varPtr->name[0], keyLen)) {
+                            found = 1;
+                            Tcl_IncrRefCount(framePtr->objv[kk + 1]);
+                            Tcl_ListObjAppendElement(interp, copyPtr, framePtr->objv[kk + 1]);
+                            if (kk + 2 > srcIndex) {
+                                /* start positional scanning at the next argument */
+                                srcIndex = kk + 2;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!found) {
+                /* we did not find the key value in the arguments list, add the default value. */
+                if (!varPtr->defValuePtr) {
+                    /* No default value, that's an error by the caller. */
+                    goto error_args;
+                }
+                Tcl_IncrRefCount(varPtr->defValuePtr);
+                Tcl_ListObjAppendElement(interp, copyPtr, varPtr->defValuePtr);
+            }
+
+            /* move to next parameter */
+            varPtr = varPtr->nextPtr;
+        }
+    }
+
+    {
+        /* Copy the positional parameters. */
+        int len = 0;
+
+        /* The named parameters or default values are all on the new argument list. Add the marker */
+        Tcl_Obj *marker = Tcl_NewStringObj("--", 2);
+        Tcl_IncrRefCount(marker);
+        Tcl_ListObjAppendElement(interp, copyPtr, marker);
+
+        /* Skip the -- parameter if present in calling arguments */
+        const char *keyString = TclGetString(framePtr->objv[srcIndex]);
+        if (keyString && keyString[0] == '-' && keyString[1] == '-' && !keyString[2]) {
+            srcIndex++;
+        }
+
+        while (srcIndex < framePtr->objc) {
+            Tcl_ListObjAppendElement(NULL, copyPtr, framePtr->objv[srcIndex]);
+            Tcl_IncrRefCount(framePtr->objv[srcIndex]);
+            srcIndex++;
+        }
+
+        /* Check that there is a value for every positional parameter */
+        Tcl_ListObjLength(NULL, copyPtr, &len);
+        if (len < framePtr->procPtr->numArgs + 1 - (varArgs ? 1 : 0)) {
+            /* There are position parameters we need to fill in if they have defaults. */
+            CompiledLocal *varPtr = framePtr->procPtr->firstLocalPtr;
+            int index = 0;
+            /* skip the parameters we have already added */
+            while (varPtr && --len > 0) {
+                varPtr = varPtr->nextPtr;
+                index++;
+            }
+            /* Copy any remaining parameters with defaults */
+            while (varPtr) {
+                Tcl_Obj *defValuePtr = varPtr->defValuePtr;
+                if (defValuePtr) {
+                    Tcl_ListObjAppendElement(NULL, copyPtr, defValuePtr);
+                    Tcl_IncrRefCount(defValuePtr);
+                }
+                /* skip the final argument if varargs */
+                if (index != framePtr->procPtr->numArgs - 1 || !varArgs) {
+                    varPtr = varPtr->nextPtr;
+                } else {
+                    varPtr = NULL;
+                }
+                index++;
+            }
+        }
+    }
+
+    {
+        /* Check that all of the parameters have a value. */
+        Tcl_Obj ** newObjv;
+        int newObjc;
+
+        /* Get the pointer to the object array */
+        Tcl_ListObjGetElements(NULL, copyPtr, &newObjc, &newObjv);
+
+        /* Check that the number of parameters is correct, or we have varArgs */
+        if (!varArgs && newObjc != framePtr->procPtr->numArgs + 1) {
+            goto error_args;
+        } else if (varArgs && newObjc < framePtr->procPtr->numArgs) {
+            goto error_args;
+        }
+
+        /* Replace the original argument list with a new positional version */
+        framePtr->objc = newObjc;
+        framePtr->objv = newObjv;
+    }
+
+    return TCL_OK;
+
+error_args:
+    {
+        /* Write the expectations for calling this named parameter proc.
+         * optional named parameters are ?-name val?, required are -name val.
+         * postion parameters are optional ?name? or just name.
+         * final args is "?arg ...?"
+         */
+        Tcl_DString errbuf;
+        int index;
+
+        Tcl_DStringInit(&errbuf);
+        index = 0;
+        CompiledLocal * varPtr = framePtr->procPtr->firstLocalPtr;
+        while (varPtr) {
+            if (varPtr->nameLength == 2 && varPtr->name[0] == '-' && varPtr->name[1] == '-') {
+                Tcl_DStringAppend(&errbuf, " ?--?", 5);
+            } else if (index < markerIndex) {
+                Tcl_DStringAppend(&errbuf, " ", 1);
+                if (varPtr->defValuePtr) {
+                    Tcl_DStringAppend(&errbuf, "?", 1);
+                }
+                Tcl_DStringAppend(&errbuf, "-", 1);
+                Tcl_DStringAppend(&errbuf, &varPtr->name[0], varPtr->nameLength);
+                Tcl_DStringAppend(&errbuf, " val", -1);
+                if (varPtr->defValuePtr) {
+                    Tcl_DStringAppend(&errbuf, "?", 1);
+                }
+            } else {
+                if (index == framePtr->procPtr->numArgs - 1
+                    && varPtr->nameLength == 4 && strncmp("args", &varPtr->name[0], 4) == 0) {
+                    Tcl_DStringAppend(&errbuf, " ?arg ...?", -1);
+                } else {
+                    Tcl_DStringAppend(&errbuf, " ", 1);
+                    if (varPtr->defValuePtr) {
+                        Tcl_DStringAppend(&errbuf, "?", 1);
+                    }
+                    Tcl_DStringAppend(&errbuf, &varPtr->name[0], varPtr->nameLength);
+                    if (varPtr->defValuePtr) {
+                        Tcl_DStringAppend(&errbuf, "?", 1);
+                    }
+                }
+            }
+            varPtr = varPtr->nextPtr;
+            index++;
+        }
+
+        Tcl_Obj *errorResult = Tcl_ObjPrintf("wrong # args: should be \"%s%s\"",
+                                             TclGetString(framePtr->objv[0]),
+                                             Tcl_DStringValue(&errbuf));
+        Tcl_SetObjResult(interp, errorResult);
+        Tcl_DStringFree(&errbuf);
+    }
+
+    iPtr->flags |= INTERP_ALTERNATE_WRONG_ARGS;
+    framePtr->objc = 1;
+    return TCL_OK;
+}
+
+/*
+ *----------------------------------------------------------------------
+ *
  * TclPushProcCallFrame --
  *
  *	Compiles a proc body if necessary, then pushes a CallFrame suitable
@@ -1602,6 +1956,13 @@ TclPushProcCallFrame(
     framePtr->objc = objc;
     framePtr->objv = objv;
     framePtr->procPtr = procPtr;
+
+    if (!isLambda && procPtr->cmdPtr->flags & CMD_NAMED_PARAMETERS) {
+        result = TclNamedParametersRewrite(interp, framePtr);
+        if (result != TCL_OK) {
+            return result;
+        }
+    }
 
     return TCL_OK;
 }
