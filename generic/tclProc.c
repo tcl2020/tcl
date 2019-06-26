@@ -1730,10 +1730,12 @@ static int TclNamedParametersRewrite(Tcl_Interp *interp, CallFrame *framePtr) {
         Tcl_ListObjAppendElement(interp, copyPtr, marker);
 
         /* Skip the -- parameter if present in calling arguments */
-        const char *keyString = TclGetString(framePtr->objv[srcIndex]);
-        if (keyString && keyString[0] == '-' && keyString[1] == '-' && !keyString[2]) {
-            srcIndex++;
-        }
+	if (srcIndex < framePtr->objc) {
+            const char *keyString = TclGetString(framePtr->objv[srcIndex]);
+            if (keyString && keyString[0] == '-' && keyString[1] == '-' && !keyString[2]) {
+                srcIndex++;
+            }
+	}
 
         while (srcIndex < framePtr->objc) {
             Tcl_ListObjAppendElement(NULL, copyPtr, framePtr->objv[srcIndex]);
