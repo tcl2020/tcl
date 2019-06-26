@@ -1823,7 +1823,7 @@ error_args:
                 if (index == framePtr->procPtr->numArgs - 1
                     && varPtr->nameLength == 4 && strncmp("args", &varPtr->name[0], 4) == 0) {
                     Tcl_DStringAppend(&errbuf, " ?arg ...?", -1);
-                } else {
+                } else if (index <= framePtr->procPtr->numArgs -1) {
                     Tcl_DStringAppend(&errbuf, " ", 1);
                     if (varPtr->defValuePtr) {
                         Tcl_DStringAppend(&errbuf, "?", 1);
