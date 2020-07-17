@@ -4,5 +4,4 @@ services:
   - docker
   
 script:
-  - cd .. && git clone https://github.com/TCL-2020/dockerfiles.git && cd dockerfiles/developer-mode && docker build -t tcl-2020-dev .
-  - cd && cd .. && docker run -it -v $PWD:/work --name dev tcl-2020-dev sh /builds/build-all.sh
+  - cd .. && git clone https://github.com/TCL-2020/dockerfiles.git && cd dockerfiles/developer-mode && docker build -t tcl-2020-dev . && mkdir workspaces && docker run -it -v $PWD/workspaces:/workspaces -v $PWD/builds:/builds --name dev tcl-2020-dev sh /builds/build-all.sh
