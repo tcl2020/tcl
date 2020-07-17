@@ -817,3 +817,11 @@ proc tcl::CopyDirectory {action src dest} {
     }
     return
 }
+
+# tcl2020 configuration
+namespace eval ::tcl2020 {
+    variable info
+    set info(version) "1.0.0"
+    variable features
+    set features(named parameters) "1.0.0"
+}
