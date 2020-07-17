@@ -815,3 +815,11 @@ foreach {safe package version file} {
   if {$isafe && !$safe} continue
   package ifneeded $package $version  [list source [file join $dir {*}$file]]
 }
+
+# tcl2020 configuration
+namespace eval ::tcl2020 {
+    variable info
+    set info(version) "1.0.0"
+    variable features
+    set features(named parameters) "1.0.0"
+}
