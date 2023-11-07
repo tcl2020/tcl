@@ -1694,7 +1694,6 @@ static int TclNamedParametersRewrite(Tcl_Interp *interp, CallFrame *framePtr) {
                         int keyLen = strlen(keyString) - 1;
                         if (keyLen == varPtr->nameLength && !strncmp(&keyString[1], &varPtr->name[0], keyLen)) {
                             found = 1;
-                            Tcl_IncrRefCount(framePtr->objv[kk + 1]);
                             Tcl_ListObjAppendElement(interp, copyPtr, framePtr->objv[kk + 1]);
                             if (kk + 2 > srcIndex) {
                                 /* start positional scanning at the next argument */
@@ -1711,7 +1710,6 @@ static int TclNamedParametersRewrite(Tcl_Interp *interp, CallFrame *framePtr) {
                     /* No default value, that's an error by the caller. */
                     goto error_args;
                 }
-                Tcl_IncrRefCount(varPtr->defValuePtr);
                 Tcl_ListObjAppendElement(interp, copyPtr, varPtr->defValuePtr);
             }
 
@@ -1726,7 +1724,6 @@ static int TclNamedParametersRewrite(Tcl_Interp *interp, CallFrame *framePtr) {
 
         /* The named parameters or default values are all on the new argument list. Add the marker */
         Tcl_Obj *marker = Tcl_NewStringObj("--", 2);
-        Tcl_IncrRefCount(marker);
         Tcl_ListObjAppendElement(interp, copyPtr, marker);
 
         /* Skip the -- parameter if present in calling arguments */
@@ -1739,7 +1736,6 @@ static int TclNamedParametersRewrite(Tcl_Interp *interp, CallFrame *framePtr) {
 
         while (srcIndex < framePtr->objc) {
             Tcl_ListObjAppendElement(NULL, copyPtr, framePtr->objv[srcIndex]);
-            Tcl_IncrRefCount(framePtr->objv[srcIndex]);
             srcIndex++;
         }
 
@@ -1759,7 +1755,6 @@ static int TclNamedParametersRewrite(Tcl_Interp *interp, CallFrame *framePtr) {
                 Tcl_Obj *defValuePtr = varPtr->defValuePtr;
                 if (defValuePtr) {
                     Tcl_ListObjAppendElement(NULL, copyPtr, defValuePtr);
-                    Tcl_IncrRefCount(defValuePtr);
                 }
                 /* skip the final argument if varargs */
                 if (index != framePtr->procPtr->numArgs - 1 || !varArgs) {
