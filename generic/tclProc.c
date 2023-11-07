@@ -1726,7 +1726,6 @@ static int TclNamedParametersRewrite(Tcl_Interp *interp, CallFrame *framePtr) {
 
         /* The named parameters or default values are all on the new argument list. Add the marker */
         Tcl_Obj *marker = Tcl_NewStringObj("--", 2);
-        Tcl_IncrRefCount(marker);
         Tcl_ListObjAppendElement(interp, copyPtr, marker);
 
         /* Skip the -- parameter if present in calling arguments */
@@ -1739,7 +1738,6 @@ static int TclNamedParametersRewrite(Tcl_Interp *interp, CallFrame *framePtr) {
 
         while (srcIndex < framePtr->objc) {
             Tcl_ListObjAppendElement(NULL, copyPtr, framePtr->objv[srcIndex]);
-            Tcl_IncrRefCount(framePtr->objv[srcIndex]);
             srcIndex++;
         }
 
@@ -1759,7 +1757,6 @@ static int TclNamedParametersRewrite(Tcl_Interp *interp, CallFrame *framePtr) {
                 Tcl_Obj *defValuePtr = varPtr->defValuePtr;
                 if (defValuePtr) {
                     Tcl_ListObjAppendElement(NULL, copyPtr, defValuePtr);
-                    Tcl_IncrRefCount(defValuePtr);
                 }
                 /* skip the final argument if varargs */
                 if (index != framePtr->procPtr->numArgs - 1 || !varArgs) {
