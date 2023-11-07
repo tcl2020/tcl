@@ -1694,7 +1694,6 @@ static int TclNamedParametersRewrite(Tcl_Interp *interp, CallFrame *framePtr) {
                         int keyLen = strlen(keyString) - 1;
                         if (keyLen == varPtr->nameLength && !strncmp(&keyString[1], &varPtr->name[0], keyLen)) {
                             found = 1;
-                            Tcl_IncrRefCount(framePtr->objv[kk + 1]);
                             Tcl_ListObjAppendElement(interp, copyPtr, framePtr->objv[kk + 1]);
                             if (kk + 2 > srcIndex) {
                                 /* start positional scanning at the next argument */
@@ -1711,7 +1710,6 @@ static int TclNamedParametersRewrite(Tcl_Interp *interp, CallFrame *framePtr) {
                     /* No default value, that's an error by the caller. */
                     goto error_args;
                 }
-                Tcl_IncrRefCount(varPtr->defValuePtr);
                 Tcl_ListObjAppendElement(interp, copyPtr, varPtr->defValuePtr);
             }
 
